@@ -1,7 +1,7 @@
 /* Q-Tel Auditor — Service Worker
    Caches app shell for offline use at sites with no signal. */
 
-const CACHE_NAME = "qtel-v2-1-0"; // bump this string on every deploy to force refresh
+const CACHE_NAME = "qtel-v2-2-0"; // bump this string on every deploy to force refresh
 const APP_SHELL = [
   "./",
   "./index.html",

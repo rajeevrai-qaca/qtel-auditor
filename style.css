@@ -275,7 +275,27 @@ input:focus, select:focus { outline: 2px solid var(--safety-orange); border-colo
   vertical-align: middle;
 }
 .note-draft { background: #f8e3e0; color: var(--stop-red); }
+.note-readonly { background: #eceeec; color: var(--steel); }
 .gps-line { margin-top: 6px; }
+
+/* ---------- Value row with fixed unit suffix ---------- */
+.value-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.value-row .cp-value { flex: 1; margin: 0; }
+.unit-suffix {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--steel-light);
+  white-space: nowrap;
+  min-width: 32px;
+}
+
+/* ---------- Read-only checkpoints ---------- */
+.checkpoint-readonly { opacity: 0.82; background: #fbfbfa; }
+.checkpoint-readonly .yn-btn,
+.checkpoint-readonly .count-btn,
+.checkpoint-readonly .btn-photo { pointer-events: none; }
+.checkpoint-readonly input,
+.checkpoint-readonly select { background: #f1f2f0; pointer-events: none; }
 
 @media (min-width: 600px) {
   .screen { align-items: center; }
