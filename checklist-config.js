@@ -1,24 +1,34 @@
 /* ============================================================
-   Q-TEL AUDITOR — CHECKLIST CONFIGURATION
+   Q-TEL AUDITOR — CHECKLIST CONFIGURATION  (v2.1)
    ============================================================
-   This file defines the ENTIRE digital check sheet structure.
-   Rajeev — you can edit checkpoints here directly (no coding
-   needed) to match the exact wording on the physical Indus
-   Towers GBT Foundation Acceptance Check Sheet.
+   Rebuilt against the ACTUAL locked tables from your July 7
+   session (Sections 1,2,4,5,6,7,8,9 all marked "FINAL ✅" in
+   that session). Recovered from conversation history — please
+   spot-check, especially Section 3 (flagged below), since I'm
+   reconstructing from chat history rather than a canonical doc.
 
-   Sections marked "PLACEHOLDER — VERIFY WORDING" contain a
-   reasonable first draft built from what we've locked so far.
-   Please compare each against the physical sheet and edit the
-   `label` text directly — the app will pick up your changes
-   automatically, no rebuild needed.
+   IMPORTANT CORRECTION FROM v2.0: all 9 sections below are
+   confirmed as C1-ONLY. Your session paused before C2's
+   checklist was defined ("tomorrow we complete C2 sections") —
+   so C2 is NOT the same checklist reused. It shows as
+   "not yet configured" in the app until we do that session.
 
    CHECKPOINT TYPES:
-     "yesno"   -> Yes / No / NA buttons
-     "value"   -> numeric or text value entry
-     "select"  -> dropdown, needs `options: []`
-     "photo"   -> photo-only checkpoint (no yes/no)
-   Any checkpoint can have photoRequired: true to force a photo
-   alongside the response.
+     "yesno"      -> Yes / No / NA buttons
+     "dualvalue"  -> two number fields (e.g. Drawing + Actual),
+                     auto-evaluates Ok/Not Ok per `compare` rule
+     "value"      -> free value entry (number or text)
+     "select"     -> dropdown, needs `options: []`
+     "count"      -> stepper with a minimum-required threshold
+     "time_photo" -> time entry + mandatory GPS-stamped photo
+     "photo"      -> photo-only checkpoint
+
+   photoRequired: true         -> always mandatory
+   photoRequiredIf: ["No"]     -> mandatory only if response is
+                                   one of these values
+   showIf: {field, equals}     -> only rendered if audit-level
+                                   field matches (foundationType,
+                                   legConfig, boltType)
    ============================================================ */
 
 const AUDIT_STRUCTURE = {
@@ -30,12 +40,7 @@ const AUDIT_STRUCTURE = {
 
   auditTypes: [
     { code: "C1", label: "C1 — Foundation + 1st Lift Column" },
-    { code: "C2", label: "C2 — 2nd Lift Column" }
-  ],
-
-  stages: [
-    { code: "PRE", label: "Pre-Pour" },
-    { code: "POUR", label: "Pour" }
+    { code: "C2", label: "C2 — 2nd Lift Column (checklist not yet configured)" }
   ],
 
   foundationTypes: [
@@ -50,9 +55,9 @@ const AUDIT_STRUCTURE = {
   ],
 
   concreteTypes: [
-    { code: "SITE_M20", label: "Site Mix — M20" },
-    { code: "RMC_M25", label: "RMC — M25" },
-    { code: "RMC_M35", label: "RMC — M35 (Fast-Track)" }
+    { code: "SITE_M20", label: "Site Mix — M20", grade: "M20", isRMC: false },
+    { code: "RMC_M25", label: "RMC — M25", grade: "M25", isRMC: true },
+    { code: "RMC_M35", label: "RMC — M35 (Fast-Track)", grade: "M35", isRMC: true }
   ],
 
   boltTypes: [
@@ -60,59 +65,83 @@ const AUDIT_STRUCTURE = {
     { code: "CIP_STUB", label: "CIP Stub" }
   ],
 
-  /* ==========================================================
-     SECTIONS — rendered in this order, one at a time
-     appliesTo: which audit type(s) this section belongs to
-     ========================================================== */
   sections: [
 
     {
       code: "GEN",
       title: "1. General Check",
-      appliesTo: ["C1", "C2"],
-      note: "PLACEHOLDER — VERIFY WORDING against physical sheet",
+      appliesTo: ["C1"],
+      status: "FINAL — confirmed July 7",
       checkpoints: [
-        { id: "GEN-01", label: "Site access and boundary demarcation in order", type: "yesno" },
-        { id: "GEN-02", label: "PPE compliance of workforce observed", type: "yesno", photoRequired: true },
-        { id: "GEN-03", label: "Site safety signage displayed", type: "yesno" },
-        { id: "GEN-04", label: "Work permit / NOC available at site", type: "yesno", photoRequired: true },
-        { id: "GEN-05", label: "Weather condition at time of audit", type: "select", options: ["Clear", "Cloudy", "Light Rain", "Heavy Rain"] }
+        { id: "1.1", label: "Planning approved drawing and site layout available", type: "yesno", photoRequired: true },
+        { id: "1.2", label: "Position of foundation as per layout", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "1.3", label: "SBC value — as per SBC report vs as per drawing", type: "dualvalue",
+          labelA: "SBC as per report", labelB: "SBC as per drawing", unit: "kN/m2",
+          compare: { rule: "b_lte_a", note: "Ok if drawing value <= report value" }, photoRequired: false },
+        { id: "1.4", label: "Wind speed — foundation design vs wind zone requirement", type: "dualvalue",
+          labelA: "Wind speed for foundation design", labelB: "Wind speed as per wind zone", unit: "km/h",
+          compare: { rule: "a_gte_b", note: "Ok if design value >= wind zone value" }, photoRequired: false },
+        { id: "1.5", label: "Site level above NGL — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing value", labelB: "Actual measured value", unit: "m",
+          compare: { rule: "b_gte_a", note: "Ok if actual >= drawing" }, photoRequired: true },
+        { id: "1.6", label: "Pumps arranged for dewatering (if required)", type: "yesno", options: ["Yes", "No", "NA"], photoRequired: true },
+        { id: "1.7", label: "Type of pre-PCC / base treatment as per drawing", type: "value", unit: "text", photoRequired: false },
+        { id: "1.8", label: "Depth of rubble soling / sand bed (if applicable)", type: "value", unit: "mm / NA", photoRequired: false },
+        { id: "1.9", label: "PCC thickness as per drawing", type: "value", unit: "mm", photoRequired: true },
+        { id: "1.10", label: "High tension line near tower area", type: "yesno", photoRequired: false },
+        { id: "1.11", label: "Auditor in-time selfie with site background", type: "time_photo", photoRequired: true }
       ]
     },
 
     {
       code: "PMC",
       title: "2. Project Management Check",
-      appliesTo: ["C1", "C2"],
-      note: "PLACEHOLDER — VERIFY WORDING against physical sheet",
+      appliesTo: ["C1"],
+      status: "FINAL — confirmed July 7",
       checkpoints: [
-        { id: "PMC-01", label: "Approved structural drawing available at site", type: "yesno", photoRequired: true },
-        { id: "PMC-02", label: "Drawing revision matches current approved version", type: "yesno" },
-        { id: "PMC-03", label: "Site engineer / supervisor present and identified", type: "yesno" },
-        { id: "PMC-04", label: "Work schedule / pour plan available", type: "yesno" }
+        { id: "2.1", label: "Mixture machine available", type: "yesno", photoRequiredIf: ["No"] },
+        { id: "2.2", label: "Vibrators available — minimum 2 nos. required", type: "count", min: 2, photoRequiredIfBelowMin: true },
+        { id: "2.3", label: "Slump cone available", type: "yesno", photoRequiredIf: ["No"] },
+        { id: "2.4", label: "Chute available", type: "yesno", options: ["Yes", "No", "NA"], photoRequiredIf: ["No"] },
+        { id: "2.5", label: "RMC pump available (if RMC)", type: "yesno", options: ["Yes", "No", "NA"], photoRequiredIf: ["No"] },
+        { id: "2.6", label: "Dewatering pump available (if required)", type: "yesno", options: ["Yes", "No", "NA"], photoRequiredIf: ["No"] },
+        { id: "2.7", label: "Shuttering material — Steel plate or waterproof ply with batten", type: "yesno", options: ["Ok", "Not Ok"], photoRequiredIf: ["Not Ok"] },
+        { id: "2.8", label: "Steel available and completed", type: "yesno", photoRequiredIf: ["No"] },
+        { id: "2.9", label: "Cement available", type: "yesno", photoRequiredIf: ["No"] },
+        { id: "2.10", label: "Aggregates (coarse and fine) available", type: "yesno", photoRequiredIf: ["No"] },
+        { id: "2.11", label: "Supervisor available", type: "yesno" },
+        { id: "2.12", label: "Team available", type: "yesno" },
+        { id: "2.13", label: "Light arrangement available (if night work)", type: "yesno", options: ["Yes", "No", "NA"] },
+        { id: "2.14", label: "Site casting with audit engineer present", type: "yesno" }
       ]
     },
 
     {
       code: "MAT",
       title: "3. Materials",
-      appliesTo: ["C1", "C2"],
-      note: "Amalgamated with M1–M6 photo protocols",
+      appliesTo: ["C1"],
+      status: "DRAFT — please confirm against physical sheet. Fullest version I could recover; could not find your explicit sign-off message for this one specifically.",
       checkpoints: [
-        { id: "MAT-01", label: "Coarse aggregate stockpile — sample 1 (top)", type: "photo", photoRequired: true },
-        { id: "MAT-02", label: "Coarse aggregate stockpile — sample 2 (mid-depth)", type: "photo", photoRequired: true },
-        { id: "MAT-03", label: "Coarse aggregate stockpile — sample 3 (base)", type: "photo", photoRequired: true },
-        { id: "MAT-04", label: "Fine aggregate — visual condition", type: "yesno", photoRequired: true },
-        {
-          id: "MAT-05",
-          label: "Silt content test (marked glass, IS 2386 Part 2 — 8% limit)",
-          type: "silt_test",
-          photoRequired: true,
-          siltTimerMinutes: 60
-        },
-        { id: "MAT-06", label: "Cement bags — brand, grade and condition", type: "yesno", photoRequired: true },
-        { id: "MAT-07", label: "Water source — visual clarity, free of contamination", type: "yesno" },
-        { id: "MAT-08", label: "Admixture (if used) — brand and dosage as per mix design", type: "yesno" }
+        { id: "3.1", label: "Cement grade — only OPC 53 to be used", type: "select", options: ["OPC 53", "OPC 43", "PPC"], photoRequired: true },
+        { id: "3.2", label: "Cement brand name", type: "value", unit: "text", photoRequired: true },
+        { id: "3.3", label: "Cement grade as marked on bag", type: "value", unit: "text", photoRequired: true },
+        { id: "3.4", label: "Cement manufacturing date", type: "value", unit: "date", photoRequired: true },
+        { id: "3.5", label: "Total cement bags available on site", type: "value", unit: "count", photoRequired: true },
+        { id: "3.6", label: "Steel make — approved brand only", type: "value", unit: "text", photoRequired: true },
+        { id: "3.7", label: "Steel grade", type: "select", options: ["Fe415", "Fe500", "Fe550"], photoRequired: true },
+        { id: "3.8", label: "Condition of reinforcement", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "3.9", label: "Coarse aggregate quality — visual check", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "3.10", label: "Coarse aggregate — sufficient quantity", type: "yesno", photoRequired: true },
+        { id: "3.11", label: "Coarse aggregate — impurities visible", type: "yesno", photoRequiredIf: ["Yes"] },
+        { id: "3.12", label: "Coarse aggregate — size and shape acceptable", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "3.13", label: "Fine aggregate (sand) quality — visual check", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "3.14", label: "Fine aggregate — sufficient quantity", type: "yesno", photoRequired: true },
+        { id: "3.15", label: "Fine aggregate — impurities visible", type: "yesno", photoRequiredIf: ["Yes"] },
+        { id: "3.16", label: "Silt content test (marked glass, IS 2386 Part 2 — 8% limit)",
+          type: "silt_test", photoRequired: true, siltTimerMinutes: 60 },
+        { id: "3.17", label: "Slump cone with tamping rod available", type: "yesno", photoRequired: true },
+        { id: "3.18", label: "Precast cover blocks available", type: "yesno", photoRequired: true },
+        { id: "3.19", label: "Casting should not start during rain", type: "select", options: ["Confirmed", "Rain present"], photoRequired: false }
       ]
     },
 
@@ -120,90 +149,177 @@ const AUDIT_STRUCTURE = {
       code: "EXC",
       title: "4. Excavation",
       appliesTo: ["C1"],
-      note: "C1 only — PLACEHOLDER — VERIFY WORDING",
+      status: "FINAL — confirmed July 7",
       checkpoints: [
-        { id: "EXC-01", label: "Excavation depth as per drawing", type: "value", unit: "m" },
-        { id: "EXC-02", label: "Excavation width/plan dimensions as per drawing", type: "yesno" },
-        { id: "EXC-03", label: "Bed preparation — level and compacted", type: "yesno", photoRequired: true },
-        { id: "EXC-04", label: "Dewatering arrangement (if applicable)", type: "yesno" },
-        { id: "EXC-05", label: "Soil bearing appears consistent with design assumption", type: "yesno" }
+        { id: "4.1", label: "Foundation depth — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing value", labelB: "Actual measured", unit: "m",
+          compare: { rule: "b_gte_a", note: "Ok if actual >= drawing" }, photoRequired: true },
+        { id: "4.2", label: "Working area dimensions — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing value", labelB: "Actual measured", unit: "m",
+          compare: { rule: "b_gte_a", note: "Ok if actual >= drawing" }, photoRequired: true },
+        { id: "4.3", label: "Foundation type (confirm from drawing)", type: "select",
+          options: ["Raft", "Isolated", "Isolated with Strip Beam"], photoRequired: true },
+        { id: "4.4", label: "Raft foundation size — Length + Breadth", type: "value", unit: "m x m",
+          showIf: { field: "foundationType", equals: "RAFT" }, photoRequired: true },
+        { id: "4.5", label: "Isolated footing size per leg — Length x Breadth", type: "value", unit: "m x m", perLeg: true,
+          showIf: { field: "foundationType", equals: "ISOLATED" }, photoRequired: true },
+        { id: "4.6", label: "Strip beam dimensions — Length + Width per beam", type: "value", unit: "m x m",
+          showIf: { field: "foundationType", equals: "ISOLATED_STRIP" }, photoRequired: true },
+        { id: "4.7", label: "All excavated area post-PCC is levelled", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "4.8", label: "Total excavation quantity", type: "value", unit: "cum", photoRequired: false },
+        { id: "4.9", label: "Centre to centre distance of column position — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing value", labelB: "Actual measured", unit: "mm",
+          compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true }
       ]
     },
 
     {
       code: "COL",
       title: "5. Column Position",
-      appliesTo: ["C1", "C2"],
-      note: "3-legged = 3 C/C side measurements; 4-legged = 2 sides + 2 diagonals. Rendered dynamically based on leg count selected.",
-      dynamic: "legConfig",
+      appliesTo: ["C1"],
+      status: "FINAL — confirmed July 7",
       checkpoints: [
-        // Rendered programmatically in app.js based on legConfig — see renderColumnPositionSection()
+        { id: "5.hdr3a", label: "3-legged — C/C Side A — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", showIf: { field: "legConfig", equals: "3LEG" },
+          compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "5.hdr3b", label: "3-legged — C/C Side B — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", showIf: { field: "legConfig", equals: "3LEG" },
+          compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "5.hdr3c", label: "3-legged — C/C Side C — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", showIf: { field: "legConfig", equals: "3LEG" },
+          compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "5.hdr4a", label: "4-legged — C/C Side A — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", showIf: { field: "legConfig", equals: "4LEG" },
+          compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "5.hdr4b", label: "4-legged — C/C Side B — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", showIf: { field: "legConfig", equals: "4LEG" },
+          compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "5.diag1", label: "4-legged — Diagonal 1 (Leg1-Leg3) — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", showIf: { field: "legConfig", equals: "4LEG" },
+          compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "5.diag2", label: "4-legged — Diagonal 2 (Leg2-Leg4) — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", showIf: { field: "legConfig", equals: "4LEG" },
+          compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "5.9", label: "All columns in line and level", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true }
       ]
     },
 
     {
       code: "SHU",
       title: "6. Shuttering / Formwork",
-      appliesTo: ["C1", "C2"],
-      note: "Per-leg joint photos — PLACEHOLDER — VERIFY WORDING",
-      dynamic: "perLeg",
+      appliesTo: ["C1"],
+      status: "FINAL — confirmed July 7",
       checkpoints: [
-        { id: "SHU-01", label: "Shuttering material condition (per leg)", type: "yesno", photoRequired: true, perLeg: true },
-        { id: "SHU-02", label: "Joints sealed — no gaps for slurry leakage (per leg)", type: "yesno", photoRequired: true, perLeg: true },
-        { id: "SHU-03", label: "Shuttering plumb and true to line", type: "yesno" },
-        { id: "SHU-04", label: "Shuttering oil applied", type: "yesno" }
+        { id: "6.overall", label: "Overall formwork view — all legs visible", type: "photo", photoRequired: true },
+        { id: "6.joint", label: "Shuttering condition & joints sealed — no gaps for slurry leakage", type: "yesno",
+          perLeg: true, photoRequired: true },
+        { id: "6.brace", label: "Bracing and supports adequate", type: "yesno", photoRequired: true },
+        { id: "6.oil", label: "Shuttering oil applied", type: "yesno", photoRequired: true },
+        { id: "6.plumb", label: "Shuttering plumb and true to line", type: "yesno", photoRequired: true },
+        { id: "6.cover", label: "Cover blocks visible in formwork", type: "yesno", photoRequired: true }
       ]
     },
 
     {
       code: "REI",
       title: "7. Reinforcement",
-      appliesTo: ["C1", "C2"],
-      note: "M3 checklist",
+      appliesTo: ["C1"],
+      status: "FINAL — confirmed July 7",
       checkpoints: [
-        { id: "REI-01", label: "Full rebar cage — longitudinal", type: "photo", photoRequired: true },
-        { id: "REI-02", label: "Full rebar cage — transverse", type: "photo", photoRequired: true },
-        { id: "REI-03", label: "Bar diameter as per drawing (read rolled marking)", type: "value", photoRequired: true },
-        { id: "REI-04", label: "Bar grade (Fe415 / Fe500D / Fe550D)", type: "select", options: ["Fe415", "Fe500D", "Fe550D"], photoRequired: true },
-        { id: "REI-05", label: "Manufacturer — on approved vendor list", type: "yesno", photoRequired: true },
-        { id: "REI-06", label: "Cover blocks — present and adequate size", type: "yesno", photoRequired: true },
-        { id: "REI-07", label: "Stirrup spacing consistent, no widening at critical zones", type: "yesno", photoRequired: true },
-        { id: "REI-08", label: "Lap positions away from critical zones", type: "yesno" },
-        { id: "REI-09", label: "General arrangement consistent with drawing", type: "yesno" }
-      ]
-    },
-
-    {
-      code: "BOLT",
-      title: "8. Foundation Bolts / Stubs",
-      appliesTo: ["C2"],
-      note: "C2 only — Anchor Bolts OR CIP Stub, selected at section start",
-      dynamic: "boltType",
-      checkpoints: [
-        { id: "BOLT-01", label: "Bolt/stub template matches tower manufacturer drawing", type: "yesno", photoRequired: true },
-        { id: "BOLT-02", label: "Projection height as per drawing", type: "value", unit: "mm" },
-        { id: "BOLT-03", label: "Bolt/stub verticality checked", type: "yesno", photoRequired: true },
-        { id: "BOLT-04", label: "Bolt/stub firmly held — no movement during pour", type: "yesno" }
+        { id: "7.1", label: "Steel placement as per drawing", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "7.2", label: "Steel make — approved brand (checked vs Approved Vendors)", type: "value", unit: "text", photoRequired: true },
+        { id: "7.3", label: "Steel grade", type: "select", options: ["Fe415", "Fe500D", "Fe550D"], photoRequired: true },
+        { id: "7.4", label: "Condition of reinforcement — clean, no damage", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "7.5", label: "Bar diameter — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual (read from marking)", unit: "mm",
+          compare: { rule: "match", note: "Ok if match" }, photoRequired: true },
+        { id: "7.6", label: "C/C distance — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm",
+          compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "7.7", label: "Number of bars — Drawing vs Actual count", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual count", unit: "nos",
+          compare: { rule: "match", note: "Ok if match" }, photoRequired: true },
+        { id: "7.8", label: "Lap length as per drawing", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "7.9", label: "Anchorage / hooks as per drawing", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "7.10", label: "Cover blocks on all faces", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "7.11", label: "Stirrups — C/C distance — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm",
+          compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "7.12", label: "Stirrup hooks — 135 degree as per IS code", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "7.13", label: "No twisting or eccentricity in column cage", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "7.14", label: "Total steel quantity on site — footing + column", type: "value", unit: "kg", photoRequired: false },
+        { id: "7.15", label: "Any less quantity found vs drawing", type: "yesno", photoRequiredIf: ["Yes"] }
       ]
     },
 
     {
       code: "RCC",
-      title: "9. RCC / Concreting",
-      appliesTo: ["C1", "C2"],
-      note: "Cube casting optional per client decision",
+      title: "8. RCC / Concreting",
+      appliesTo: ["C1"],
+      status: "FINAL — confirmed July 7",
       checkpoints: [
-        { id: "RCC-01", label: "Concrete type confirmed at start of section", type: "select", options: ["Site Mix M20", "RMC M25", "RMC M35"] },
-        { id: "RCC-02", label: "Slump test result", type: "value", unit: "mm", photoRequired: true },
-        { id: "RCC-03", label: "Cube casting done (optional — per client)", type: "yesno", photoRequired: true },
-        { id: "RCC-04", label: "Pour in progress — vibration visible, no segregation", type: "photo", photoRequired: true },
-        { id: "RCC-05", label: "Concrete surface finish — post pour", type: "photo", photoRequired: true },
-        { id: "RCC-06", label: "Curing arrangement started within stipulated time", type: "yesno", photoRequired: true }
+        { id: "8.1", label: "Casting start time + Auditor selfie with site background", type: "time_photo", photoRequired: true },
+        { id: "8.2", label: "Casting type", type: "value", unit: "auto", readOnlyFrom: "concreteTypeCategory", photoRequired: false },
+        { id: "8.3", label: "Concrete grade", type: "select", options: ["M20", "M25", "M35"], photoRequired: false },
+        { id: "8.4", label: "Slump value — Target vs Actual", type: "dualvalue",
+          labelA: "Target", labelB: "Actual", unit: "mm",
+          compare: { rule: "tolerance", tolerance: 25, note: "Not Ok if outside +/-25mm" }, photoRequired: true },
+        { id: "8.5", label: "Cube casting done (optional — client removed from mandatory; no auto-NCR)", type: "yesno", photoRequiredIf: ["Yes"] },
+        { id: "8.6", label: "Vibrator in use during pour", type: "yesno", photoRequired: true },
+        { id: "8.7", label: "Concrete placement — no excessive drop height", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "8.8", label: "Concrete layer thickness — controlled pour", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "8.9", label: "No casting during rain", type: "select", options: ["Confirmed", "Rain"], photoRequired: false },
+        { id: "8.10", label: "Misalignment between 1st lift and foundation bolts", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "8.11", label: "Depth of connected tie beam / slab (if applicable)", type: "value", unit: "mm / NA", photoRequired: true },
+        { id: "8.12", label: "Length of first lift", type: "value", unit: "m", photoRequired: true },
+        { id: "8.13", label: "Top surface finish", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "8.14", label: "Initial curing arrangement in place", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "8.15", label: "Casting end time + Auditor selfie with site background", type: "time_photo", photoRequired: true }
+      ]
+    },
+
+    {
+      code: "BOLT",
+      title: "9. Foundation Bolts / Stubs",
+      appliesTo: ["C1"],
+      status: "FINAL — confirmed July 7. Bolt type selected at start of this section.",
+      dynamic: "boltType",
+      checkpointsAnchor: [
+        { id: "9A.1", label: "PDI stamp visible on bolts", type: "yesno", photoRequired: true },
+        { id: "9A.2", label: "Bolt diameter — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", compare: { rule: "match", note: "Ok if match" }, photoRequired: true },
+        { id: "9A.3", label: "Thread dimension correct", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9A.4", label: "Thread not damaged", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9A.5", label: "Length of bolts — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", compare: { rule: "match", note: "Ok if match" }, photoRequired: true },
+        { id: "9A.6", label: "No. of lock, main and base nuts as per drawing", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9A.7", label: "Threaded portion galvanised", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9A.8", label: "Template size and fitment as per drawing", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9A.9", label: "Template + bolts centred in column — all-side cover equal", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9A.10", label: "Template level — must be 0°", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9A.11", label: "Thread visible above finished foundation level", type: "yesno", photoRequired: true },
+        { id: "9A.12", label: "C/C distances A, B, C — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "9A.13", label: "Bolt thread covered with plastic before concreting", type: "yesno", photoRequired: true },
+        { id: "9A.14", label: "Drain pipe provision (if applicable)", type: "yesno", options: ["Yes", "No", "NA"], photoRequiredIf: ["applicable"] }
+      ],
+      checkpointsCIP: [
+        { id: "9B.1", label: "CIP stub PDI approved", type: "yesno", photoRequired: true },
+        { id: "9B.2", label: "Stub dimension — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", compare: { rule: "match", note: "Ok if match" }, photoRequired: true },
+        { id: "9B.3", label: "Stub level — must be 0°", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9B.4", label: "C/C distances A, B, C — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", compare: { rule: "tolerance", tolerance: 10, note: "Ok if within +/-10mm" }, photoRequired: true },
+        { id: "9B.5", label: "All stubs properly connected / tied", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9B.6", label: "Stub galvanisation", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9B.7", label: "Stub depth — Drawing vs Actual", type: "dualvalue",
+          labelA: "Drawing", labelB: "Actual", unit: "mm", compare: { rule: "match", note: "Ok if match" }, photoRequired: true },
+        { id: "9B.8", label: "Working area below stub maintained after casting", type: "yesno", options: ["Ok", "Not Ok"], photoRequired: true },
+        { id: "9B.9", label: "Drain pipe provision (if applicable)", type: "yesno", options: ["Yes", "No", "NA"], photoRequiredIf: ["applicable"] }
       ]
     }
 
   ]
 };
 
-// Export for use in app.js
 if (typeof module !== "undefined") module.exports = AUDIT_STRUCTURE;

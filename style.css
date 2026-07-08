@@ -242,6 +242,41 @@ input:focus, select:focus { outline: 2px solid var(--safety-orange); border-colo
 .silt-box.locked { border-color: var(--steel-light); background: #eceeec; }
 .silt-box.ready { border-color: var(--go-green); background: #e2f3e9; }
 
+/* ---------- Dual-value widget ---------- */
+.dualvalue-widget { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.dv-row { display: flex; align-items: center; gap: 8px; }
+.dv-label { flex: 1; font-size: 13px; font-weight: 600; color: var(--steel); margin: 0; }
+.dv-input { width: 110px; padding: 10px; font-size: 15px; border: 1.5px solid var(--line); border-radius: 8px; }
+.dv-result { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.badge-notok { background: #f8e3e0; color: var(--stop-red); }
+
+/* ---------- Count stepper ---------- */
+.count-widget { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.count-btn {
+  width: 40px; height: 40px;
+  border: 1.5px solid var(--line);
+  background: #fff;
+  border-radius: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.count-value { font-size: 18px; font-weight: 700; min-width: 24px; text-align: center; }
+
+/* ---------- Draft tag / GPS line ---------- */
+.draft-tag {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--stop-red);
+  border: 1px solid var(--stop-red);
+  border-radius: 6px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.note-draft { background: #f8e3e0; color: var(--stop-red); }
+.gps-line { margin-top: 6px; }
+
 @media (min-width: 600px) {
   .screen { align-items: center; }
   .job-list, .section-list, .checkpoint-list { width: 100%; max-width: 480px; }
