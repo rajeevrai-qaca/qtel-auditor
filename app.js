@@ -413,6 +413,7 @@ function isPhotoRequired(cp, response) {
   if (cp.photoRequired) return true;
   if (cp.photoRequiredIf && response && cp.photoRequiredIf.includes(response.value)) return true;
   if (cp.photoRequiredIfBelowMin && response && typeof response.count === "number" && response.count < cp.min) return true;
+  if (cp.photoRequiredIfMet && response && typeof response.count === "number" && response.count >= cp.min) return true;
   return false;
 }
 function checkpointApplies(cp, audit) {
@@ -446,6 +447,13 @@ function evaluateDualValue(cp, a, b) {
   if (rule === "a_gte_b") return na >= nb;
   if (rule === "match") return Math.abs(na - nb) < 0.001;
   if (rule === "tolerance") return Math.abs(na - nb) <= (cp.compare.tolerance || 0);
+  return null;
+}
+function evaluateRebarField(design, actual, rule, tolerance) {
+  const nd = parseFloat(design), na = parseFloat(actual);
+  if (isNaN(nd) || isNaN(na)) return null;
+  if (rule === "match") return Math.abs(nd - na) < 0.001;
+  if (rule === "tolerance") return Math.abs(nd - na) <= (tolerance || 0);
   return null;
 }
 function daysBetween(d1, d2) { return Math.round((d2 - d1) / 86400000); }
@@ -511,6 +519,28 @@ function renderCheckpoint(cp, secData, audit, readOnly) {
     controlHtml = `<div class="silt-widget" data-cp="${cp.id}"></div>`;
   } else if (cp.type === "silt_test_v2") {
     controlHtml = `<div class="silt-widget-v2" data-cp="${cp.id}"></div>`;
+  } else if (cp.type === "rebar_row") {
+    const dDia = existing.dDia || "", dSecond = existing.dSecond || "";
+    const aDia = existing.aDia || "", aSecond = existing.aSecond || "";
+    const diaOk = evaluateRebarField(dDia, aDia, "match", 0);
+    const secondOk = evaluateRebarField(dSecond, aSecond, cp.secondCompare, cp.tolerance);
+    controlHtml = `
+      <div class="rebar-row-widget" data-cp="${cp.id}">
+        <div class="rebar-subrow">
+          <span class="rebar-subrow-label">Design</span>
+          <div class="rebar-field"><input class="rebar-input" data-field="dDia" type="number" step="any" value="${dDia}" ${dis}><span class="unit-suffix">mm dia</span></div>
+          <div class="rebar-field"><input class="rebar-input" data-field="dSecond" type="number" step="any" value="${dSecond}" ${dis}><span class="unit-suffix">${cp.secondUnit}</span></div>
+        </div>
+        <div class="rebar-subrow">
+          <span class="rebar-subrow-label">Actual</span>
+          <div class="rebar-field"><input class="rebar-input" data-field="aDia" type="number" step="any" value="${aDia}" ${dis}><span class="unit-suffix">mm dia</span></div>
+          <div class="rebar-field"><input class="rebar-input" data-field="aSecond" type="number" step="any" value="${aSecond}" ${dis}><span class="unit-suffix">${cp.secondUnit}</span></div>
+        </div>
+        <div class="rebar-result">
+          Dia: ${diaOk === null ? '<span class="muted small">—</span>' : (diaOk ? '<span class="badge badge-complete">Ok</span>' : '<span class="badge badge-notok">Not Ok</span>')}
+          ${cp.secondLabel}: ${secondOk === null ? '<span class="muted small">—</span>' : (secondOk ? '<span class="badge badge-complete">Ok</span>' : '<span class="badge badge-notok">Not Ok</span>')}
+        </div>
+      </div>`;
   }
 
   const needsPhotoBtn = (cp.type === "photo" || cp.type === "time_photo" || isPhotoRequired(cp, existing) || (cp.photoOptionalAllowed && !readOnly)) && cp.type !== "silt_test_v2";
@@ -577,6 +607,20 @@ function renderCheckpoint(cp, secData, audit, readOnly) {
         const a = dvWidget.querySelector('[data-part="a"]').value;
         const b = dvWidget.querySelector('[data-part="b"]').value;
         secData.responses[cp.id] = { ...(secData.responses[cp.id] || {}), a, b };
+        await idbPut("audits", audit);
+        refreshSectionRunner();
+      };
+    });
+  }
+  const rebarWidget = wrap.querySelector(".rebar-row-widget");
+  if (rebarWidget) {
+    rebarWidget.querySelectorAll(".rebar-input").forEach(input => {
+      input.onblur = async () => {
+        const dDia = rebarWidget.querySelector('[data-field="dDia"]').value;
+        const dSecond = rebarWidget.querySelector('[data-field="dSecond"]').value;
+        const aDia = rebarWidget.querySelector('[data-field="aDia"]').value;
+        const aSecond = rebarWidget.querySelector('[data-field="aSecond"]').value;
+        secData.responses[cp.id] = { ...(secData.responses[cp.id] || {}), dDia, dSecond, aDia, aSecond };
         await idbPut("audits", audit);
         refreshSectionRunner();
       };
