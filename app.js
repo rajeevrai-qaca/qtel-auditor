@@ -216,7 +216,7 @@ function renderCurrentView() {
 
 function renderJobSetup() {
   app.innerHTML = `
-    <header class="app-bar"><h1>Q-Tel Auditor — New Job</h1></header>
+    <header class="app-bar"><h1>Q-Tel Auditor — New Job</h1><span class="app-wordmark">QACA</span></header>
     <main>
       <div class="card">
         <div class="field">
@@ -242,6 +242,7 @@ function renderJobSetup() {
       </div>
       <p class="note">Job is saved locally the moment you tap Start — works fully offline. GPS begins tracking as soon as the job opens.</p>
     </main>
+    <footer class="company-footer"><span class="name">Quality Austria Central Asia Pvt. Ltd.</span><br>Q-Tel Quality Telecom Operations Platform</footer>
   `;
   document.getElementById("btn-start-job").onclick = async () => {
     const siteName = document.getElementById("f-site").value.trim();
@@ -267,6 +268,7 @@ async function renderModuleList() {
     <header class="app-bar">
       <span class="back" id="btn-back">‹</span>
       <h1>${state.job.siteName}</h1>
+      <span class="app-wordmark">QACA</span>
       <span class="badge">${state.job.elementType}</span>
     </header>
     <main>
@@ -317,6 +319,7 @@ async function renderModuleDetail() {
     <header class="app-bar">
       <span class="back" id="btn-back">‹</span>
       <h1>${mod.code} — ${mod.name}</h1>
+      <span class="app-wordmark">QACA</span>
     </header>
     <main>
       <div class="card">
