@@ -24,8 +24,9 @@ const QTEL_CONFIG = {
         { id: "S2", label: "Sample B — middle depth" },
         { id: "S3", label: "Sample C — base/edge" },
         { id: "S4", label: "Clump test (fist squeeze)" },
-        { id: "S5", label: "Silt test glass (after 60-min settle)", timerSeconds: 3600 },
-        { id: "S6", label: "Overall stockpile view" },
+        { id: "S5", label: "Silt test — START (settlement begins)" },
+        { id: "S6", label: "Silt test — READING (after 60 min)", timerSeconds: 3600, timerStartsFromSlot: "S5" },
+        { id: "S7", label: "Overall stockpile view" },
       ],
     },
     {

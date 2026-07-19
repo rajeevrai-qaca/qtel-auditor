@@ -326,6 +326,13 @@ async function renderModuleDetail() {
         <div class="slot-grid" id="slot-grid"></div>
       </div>
       <p class="note">Tap a tile to capture that photo. GPS and timestamp are burned into the image automatically. ${mod.requiresSeniorReview ? "This module always requires senior CQR-A review — no automated clearance." : ""}</p>
+      <div class="card">
+        <div class="field" style="margin-bottom:0;">
+          <label>Auditor Observation (optional)</label>
+          <textarea id="f-auditor-observation" rows="3" placeholder="Anything you noticed on site worth recording — e.g. site conditions, access issues, anything not fully visible in the photos."></textarea>
+          <p class="note" style="margin-top:6px;">This is your factual record, not a pass/fail call — CQR-A makes all grading decisions.</p>
+        </div>
+      </div>
       <button class="primary" id="btn-submit-module" style="margin-top:12px;">Submit Module</button>
     </main>
     <div class="camera-wrap hidden" id="camera-wrap">
@@ -343,6 +350,19 @@ async function renderModuleDetail() {
   `;
   document.getElementById("btn-back").onclick = () => { currentView = "module-list"; renderCurrentView(); };
 
+  const moduleKey = `${state.job.jobId}_${mod.code}`;
+  const savedModule = await dbGet("modules", moduleKey).catch(() => null);
+  const obsField = document.getElementById("f-auditor-observation");
+  if (savedModule && savedModule.auditorObservation) obsField.value = savedModule.auditorObservation;
+  obsField.addEventListener("blur", async () => {
+    await dbPut("modules", {
+      moduleRecordId: moduleKey,
+      jobId: state.job.jobId,
+      moduleCode: mod.code,
+      auditorObservation: obsField.value,
+    });
+  });
+
   const grid = document.getElementById("slot-grid");
   mod.slots.forEach((slot) => {
     const existing = modPhotos.find((p) => p.slotId === slot.id);
@@ -357,19 +377,43 @@ async function renderModuleDetail() {
     grid.appendChild(tile);
   });
 
-  document.getElementById("btn-submit-module").onclick = () => submitModule(mod, modPhotos);
+  document.getElementById("btn-submit-module").onclick = () => submitModule(mod, modPhotos, obsField.value);
   updateSyncBar();
 }
 
-function startCaptureForSlot(slot) {
+async function startCaptureForSlot(slot) {
   state.currentSlotId = slot.id;
+
+  if (slot.timerStartsFromSlot) {
+    const existingPhotos = await dbGetAll("photos", "jobId", state.job.jobId);
+    const startPhoto = existingPhotos.find(
+      (p) => p.moduleCode === state.currentModule.code && p.slotId === slot.timerStartsFromSlot
+    );
+    if (!startPhoto) {
+      alert("Capture the 'START' photo for this test first — the 60-minute timer is measured from that photo's actual timestamp.");
+      return;
+    }
+    const elapsedMs = Date.now() - new Date(startPhoto.capturedAt).getTime();
+    const remaining = slot.timerSeconds * 1000 - elapsedMs;
+    if (remaining > 0) {
+      openCameraAndArmCapture(slot);
+      showTimerLock(remaining, () => {});
+      return;
+    }
+  }
+
+  openCameraAndArmCapture(slot);
+}
+
+function openCameraAndArmCapture(slot) {
   const wrap = document.getElementById("camera-wrap");
   wrap.classList.remove("hidden");
   wrap.scrollIntoView({ behavior: "smooth" });
   openCamera();
 
-  if (slot.timerSeconds) {
-    // e.g. silt test — enforce the wait before allowing capture
+  if (slot.timerSeconds && !slot.timerStartsFromSlot) {
+    // Legacy path: timer anchored to first tap into this slot (used only if a slot has
+    // timerSeconds but no linked start slot).
     const key = `${state.job.jobId}_${state.currentModule.code}_${slot.id}_timerStart`;
     let startedAt = localStorage.getItem(key);
     if (!startedAt) { startedAt = Date.now(); localStorage.setItem(key, startedAt); }
@@ -425,11 +469,18 @@ function showTimerLock(remainingMs, onDone) {
   tick();
 }
 
-async function submitModule(mod, modPhotos) {
+async function submitModule(mod, modPhotos, auditorObservation) {
   if (modPhotos.length < mod.slots.length) {
     alert(`${mod.slots.length - modPhotos.length} photo(s) still needed before this module can be submitted.`);
     return;
   }
+  await dbPut("modules", {
+    moduleRecordId: `${state.job.jobId}_${mod.code}`,
+    jobId: state.job.jobId,
+    moduleCode: mod.code,
+    auditorObservation: auditorObservation || "",
+    submittedAt: new Date().toISOString(),
+  });
   for (const p of modPhotos) {
     if (p.status === "captured") {
       await queuePhotoForSync(p);
