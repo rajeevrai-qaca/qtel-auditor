@@ -326,10 +326,12 @@ async function renderModuleDetail() {
       <button class="primary" id="btn-submit-module" style="margin-top:12px;">Submit Module</button>
     </main>
     <div class="camera-wrap hidden" id="camera-wrap">
-      <video id="camera-stream" autoplay playsinline muted></video>
+      <div class="camera-frame">
+        <video id="camera-stream" autoplay playsinline muted></video>
+        <div class="gps-chip" id="gps-chip">Acquiring GPS…</div>
+      </div>
       <canvas id="capture-canvas" class="hidden"></canvas>
-      <div class="gps-chip" id="gps-chip">Acquiring GPS…</div>
-      <div class="camera-actions" style="margin-top:8px;">
+      <div class="camera-actions">
         <button class="secondary" id="btn-cancel-capture">Cancel</button>
         <button class="primary" id="btn-take-photo">Capture</button>
       </div>
@@ -399,10 +401,10 @@ function startCaptureForSlot(slot) {
 }
 
 function showTimerLock(remainingMs, onDone) {
-  const wrap = document.getElementById("camera-wrap");
+  const frame = document.querySelector("#camera-wrap .camera-frame");
   const lock = document.createElement("div");
   lock.className = "timer-lock";
-  wrap.appendChild(lock);
+  frame.appendChild(lock);
   document.getElementById("btn-take-photo").disabled = true;
   const tick = () => {
     const mins = Math.floor(remainingMs / 60000);
