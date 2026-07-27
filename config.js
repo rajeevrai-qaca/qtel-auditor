@@ -8,11 +8,26 @@
 // but don't state an explicit photo count the way M1/M2/M3/M11 do. Adjust below.
 
 const QTEL_CONFIG = {
-  // Fill this in once the n8n webhook (WF-006 entry point) is live
-  N8N_WEBHOOK_URL: "REPLACE_WITH_YOUR_N8N_WEBHOOK_URL",
+  // All endpoints below are LIVE on the self-hosted n8n instance (n8n.q-tel.in),
+  // built and proven working on July 25-26, 2026.
+  API_BASE: "https://n8n.q-tel.in/webhook",
 
-  // Google Drive upload endpoint is handled inside the n8n workflow, not here.
-  // The PWA only ever talks to ONE endpoint: the n8n webhook below.
+  ENDPOINTS: {
+    LOGIN_STEP1: "https://n8n.q-tel.in/webhook/login-step1",   // WF-008 — PIN check (+ OTP when re-enabled)
+    LOGIN_STEP2: "https://n8n.q-tel.in/webhook/login-step2",   // WF-008b — OTP verify — NOT USED YET (PIN-only for POC)
+    GET_MY_JOBS: "https://n8n.q-tel.in/webhook/get-my-jobs",   // WF-009
+    PHOTO_SUBMIT: "https://n8n.q-tel.in/webhook/photo-submit", // WF-010
+  },
+
+  // PIN-ONLY LOGIN FOR POC (decided July 27, 2026): Step 2 / OTP is built and
+  // proven on the backend (WF-008b) but deliberately not wired into the PWA yet —
+  // qtel_session_reference WhatsApp template approval timing is outside our
+  // control, so it's out of the critical path for tomorrow's site test.
+  // Re-enable by setting this to true once ready.
+  REQUIRE_OTP: false,
+
+  // Google Drive upload happens inside WF-010, not here.
+  // The PWA only ever talks to the endpoints above.
 
   MODULES: [
     {

@@ -7,7 +7,8 @@ const DB_VERSION = 1;
 let db;
 
 const state = {
-  job: null,          // { jobId, siteName, elementType, concreteGrade, createdAt }
+  user: null,         // { userRecordId, userId, fullName }
+  job: null,          // { jobId (real Audit Job record ID), auditJobId, siteName, elementType, concreteGrade }
   currentModule: null,
   currentSlotId: null,
   gpsWatchId: null,
@@ -157,17 +158,24 @@ async function queuePhotoForSync(photoRecord) {
 async function attemptSync() {
   updateSyncBar();
   if (!navigator.onLine) return;
-  if (!QTEL_CONFIG.N8N_WEBHOOK_URL || QTEL_CONFIG.N8N_WEBHOOK_URL.startsWith("REPLACE")) {
-    console.warn("n8n webhook URL not configured yet — photos stay queued locally.");
-    return;
-  }
   const queued = await dbGetAll("photos", "status", "queued");
   for (const photo of queued) {
     try {
-      const res = await fetch(QTEL_CONFIG.N8N_WEBHOOK_URL, {
+      const payload = {
+        photoId: photo.photoId,
+        jobId: state.job.jobId, // real Audit Job record ID
+        moduleCode: photo.moduleCode,
+        slotId: photo.slotId,
+        slotLabel: photo.slotLabel,
+        gps: photo.gps,
+        capturedAt: photo.capturedAt,
+        userRecordId: state.user.userRecordId,
+        dataUrl: photo.dataUrl,
+      };
+      const res = await fetch(QTEL_CONFIG.ENDPOINTS.PHOTO_SUBMIT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(photo),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         photo.status = "submitted";
@@ -206,60 +214,118 @@ window.addEventListener("offline", updateSyncBar);
 
 // ---------- Rendering ----------
 const app = document.getElementById("app");
-let currentView = "job-setup";
+let currentView = "login";
 
 function renderCurrentView() {
-  if (currentView === "job-setup") renderJobSetup();
+  if (currentView === "login") renderLogin();
+  else if (currentView === "job-list") renderJobList();
   else if (currentView === "module-list") renderModuleList();
   else if (currentView === "module-detail") renderModuleDetail();
 }
 
-function renderJobSetup() {
+function renderLogin() {
   app.innerHTML = `
-    <header class="app-bar"><h1>Q-Tel Auditor — New Job</h1><span class="app-wordmark">QACA</span></header>
+    <header class="app-bar"><h1>Q-Tel Auditor — Login</h1><span class="app-wordmark">QACA</span></header>
     <main>
       <div class="card">
         <div class="field">
-          <label>Site Name</label>
-          <input type="text" id="f-site" placeholder="e.g. Khavda RE Park Phase 1">
+          <label>User ID</label>
+          <input type="text" id="f-userid" placeholder="e.g. AUD-1023" autocapitalize="characters">
         </div>
         <div class="field">
-          <label>Element Type</label>
-          <select id="f-element">
-            <option>Footing</option><option>Pile Cap</option><option>Grade Beam</option>
-            <option>Column</option><option>Beam</option><option>Slab</option>
-            <option>Raft Foundation</option><option>Other</option>
-          </select>
+          <label>PIN</label>
+          <input type="text" inputmode="numeric" id="f-pin" placeholder="4-digit PIN" maxlength="6">
         </div>
-        <div class="field">
-          <label>Concrete Grade</label>
-          <select id="f-grade">
-            <option>M15</option><option>M20</option><option>M25</option><option>M30</option>
-            <option>M35</option><option>M40</option><option>M45</option><option>M50</option>
-          </select>
-        </div>
-        <button class="primary" id="btn-start-job">Start Audit Job</button>
+        <button class="primary" id="btn-login">Login</button>
+        <p class="note" id="login-error" style="color:var(--danger); display:none; margin-top:10px;"></p>
       </div>
-      <p class="note">Job is saved locally the moment you tap Start — works fully offline. GPS begins tracking as soon as the job opens.</p>
     </main>
     <footer class="company-footer"><span class="name">Quality Austria Central Asia Pvt. Ltd.</span><br>Q-Tel Quality Telecom Operations Platform</footer>
   `;
-  document.getElementById("btn-start-job").onclick = async () => {
-    const siteName = document.getElementById("f-site").value.trim();
-    if (!siteName) { alert("Site Name is required."); return; }
-    const jobId = "JOB-" + Date.now();
-    state.job = {
-      jobId,
-      siteName,
-      elementType: document.getElementById("f-element").value,
-      concreteGrade: document.getElementById("f-grade").value,
-      createdAt: new Date().toISOString(),
-    };
-    await dbPut("jobs", state.job);
-    startGPSWatch();
-    currentView = "module-list";
-    renderCurrentView();
+  document.getElementById("btn-login").onclick = async () => {
+    const userId = document.getElementById("f-userid").value.trim();
+    const pin = document.getElementById("f-pin").value.trim();
+    const errEl = document.getElementById("login-error");
+    errEl.style.display = "none";
+    if (!userId || !pin) { errEl.textContent = "User ID and PIN are both required."; errEl.style.display = "block"; return; }
+    const btn = document.getElementById("btn-login");
+    btn.disabled = true; btn.textContent = "Checking…";
+    try {
+      const res = await fetch(QTEL_CONFIG.ENDPOINTS.LOGIN_STEP1, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, pin }),
+      });
+      const data = await res.json();
+      // PIN-only POC mode: treat both "success" and "otp_required" as a valid
+      // PIN match (the PIN check happens before the OTP branch in WF-008),
+      // and skip straight in — OTP step is not wired into the UI yet.
+      if (data.status === "success" || data.status === "otp_required") {
+        state.user = { userRecordId: data.userRecordId, userId, fullName: data.fullName || userId };
+        currentView = "job-list";
+        renderCurrentView();
+      } else {
+        errEl.textContent = data.message || "Login failed. Check your User ID and PIN.";
+        errEl.style.display = "block";
+      }
+    } catch (err) {
+      errEl.textContent = "Could not reach the server. Check your connection and try again.";
+      errEl.style.display = "block";
+    } finally {
+      btn.disabled = false; btn.textContent = "Login";
+    }
   };
+}
+
+async function renderJobList() {
+  app.innerHTML = `
+    <header class="app-bar"><h1>${state.user.fullName}</h1><span class="app-wordmark">QACA</span></header>
+    <main>
+      <p class="note" id="jobs-status">Loading your allocated jobs…</p>
+      <div class="module-list" id="job-list"></div>
+    </main>
+    <footer class="company-footer"><span class="name">Quality Austria Central Asia Pvt. Ltd.</span></footer>
+  `;
+  try {
+    const res = await fetch(QTEL_CONFIG.ENDPOINTS.GET_MY_JOBS, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: state.user.userId }),
+    });
+    const data = await res.json();
+    const jobs = data.jobs || [];
+    document.getElementById("jobs-status").textContent = jobs.length
+      ? "Tap a job to begin."
+      : "No active jobs allocated to you right now.";
+    const listEl = document.getElementById("job-list");
+    jobs.forEach((job) => {
+      const row = document.createElement("div");
+      row.className = "module-row";
+      row.innerHTML = `
+        <div class="info">
+          <div class="name">${job.auditJobId}</div>
+          <div class="meta">${job.site || "Site TBD"} · ${job.elementType || ""} ${job.concreteGrade || ""}</div>
+        </div>
+        <div class="pill in-progress">Open</div>
+      `;
+      row.onclick = async () => {
+        state.job = {
+          jobId: job.recordId, // real Audit Job record ID — used directly in photo submissions
+          auditJobId: job.auditJobId,
+          siteName: job.site || "Site TBD",
+          elementType: job.elementType || "",
+          concreteGrade: job.concreteGrade || "",
+        };
+        await dbPut("jobs", state.job);
+        startGPSWatch();
+        currentView = "module-list";
+        renderCurrentView();
+      };
+      listEl.appendChild(row);
+    });
+  } catch (err) {
+    document.getElementById("jobs-status").textContent = "Could not load your jobs. Check your connection and try again.";
+  }
 }
 
 async function renderModuleList() {
@@ -276,7 +342,7 @@ async function renderModuleList() {
     </main>
     <div class="sync-bar" id="sync-bar"><span class="dot" id="sync-dot"></span><span class="msg" id="sync-msg"></span></div>
   `;
-  document.getElementById("btn-back").onclick = () => { currentView = "job-setup"; renderCurrentView(); };
+  document.getElementById("btn-back").onclick = () => { currentView = "job-list"; renderCurrentView(); };
 
   const listEl = document.getElementById("module-list");
   QTEL_CONFIG.MODULES.forEach((mod) => {
