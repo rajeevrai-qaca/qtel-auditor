@@ -161,6 +161,8 @@ async function attemptSync() {
   const queued = await dbGetAll("photos", "status", "queued");
   for (const photo of queued) {
     try {
+      const moduleKey = `${state.job.jobId}_${photo.moduleCode}`;
+      const savedModule = await dbGet("modules", moduleKey).catch(() => null);
       const payload = {
         photoId: photo.photoId,
         jobId: state.job.jobId, // real Audit Job record ID
@@ -170,6 +172,7 @@ async function attemptSync() {
         gps: photo.gps,
         capturedAt: photo.capturedAt,
         userRecordId: state.user.userRecordId,
+        auditorObservation: (savedModule && savedModule.auditorObservation) || "",
         dataUrl: photo.dataUrl,
       };
       const res = await fetch(QTEL_CONFIG.ENDPOINTS.PHOTO_SUBMIT, {
