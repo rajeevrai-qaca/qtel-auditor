@@ -499,7 +499,7 @@ function openCameraAndArmCapture(slot) {
   document.getElementById("btn-take-photo").onclick = async () => {
     const captured = capturePhotoWithWatermark();
     const photoRecord = {
-      photoId: `${state.job.jobId}_${state.currentModule.code}_${slot.id}_${Date.now()}`,
+      photoId: `${state.job.jobId}_${state.currentModule.code}_${slot.id}`,
       jobId: state.job.jobId,
       moduleCode: state.currentModule.code,
       slotId: slot.id,
