@@ -1,29 +1,239 @@
+// Q-Tel Auditor PWA v3.0 — App Logic
+// Vanilla JS, no build step, no framework. Matches the "no external developer"
+// build principle — every function here is deliberately simple to read/edit.
+
+const DB_NAME = "qtel_auditor_v3";
+const DB_VERSION = 1;
+let db;
+
 const state = {
-  user: null,       // { userRecordId, userId, fullName }
-  reviews: [],
-  currentReview: null,
-  selectedDecision: null,
+  user: null,         // { userRecordId, userId, fullName }
+  job: null,          // { jobId (real Audit Job record ID), auditJobId, siteName, elementType, concreteGrade }
+  currentModule: null,
+  currentSlotId: null,
+  gpsWatchId: null,
+  lastPosition: null,
+  stream: null,
 };
 
+// ---------- IndexedDB ----------
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const database = e.target.result;
+      if (!database.objectStoreNames.contains("jobs")) {
+        database.createObjectStore("jobs", { keyPath: "jobId" });
+      }
+      if (!database.objectStoreNames.contains("photos")) {
+        const store = database.createObjectStore("photos", { keyPath: "photoId" });
+        store.createIndex("jobId", "jobId");
+        store.createIndex("status", "status");
+      }
+      if (!database.objectStoreNames.contains("modules")) {
+        const store = database.createObjectStore("modules", { keyPath: "moduleRecordId" });
+        store.createIndex("jobId", "jobId");
+      }
+    };
+    req.onsuccess = (e) => { db = e.target.result; resolve(db); };
+    req.onerror = (e) => reject(e);
+  });
+}
+
+function tx(storeName, mode = "readonly") {
+  return db.transaction(storeName, mode).objectStore(storeName);
+}
+
+function dbPut(storeName, value) {
+  return new Promise((resolve, reject) => {
+    const req = tx(storeName, "readwrite").put(value);
+    req.onsuccess = () => resolve(value);
+    req.onerror = (e) => reject(e);
+  });
+}
+
+function dbGetAll(storeName, indexName, query) {
+  return new Promise((resolve, reject) => {
+    const store = tx(storeName);
+    const source = indexName ? store.index(indexName) : store;
+    const req = query ? source.getAll(query) : source.getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = (e) => reject(e);
+  });
+}
+
+function dbGet(storeName, key) {
+  return new Promise((resolve, reject) => {
+    const req = tx(storeName).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = (e) => reject(e);
+  });
+}
+
+// ---------- GPS ----------
+function startGPSWatch() {
+  if (!navigator.geolocation) return;
+  state.gpsWatchId = navigator.geolocation.watchPosition(
+    (pos) => { state.lastPosition = pos; updateGPSChip(); },
+    (err) => console.warn("GPS error", err),
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+  );
+}
+
+function updateGPSChip() {
+  const chip = document.getElementById("gps-chip");
+  if (!chip) return;
+  if (!state.lastPosition) { chip.textContent = "Acquiring GPS…"; return; }
+  const { latitude, longitude, accuracy } = state.lastPosition.coords;
+  chip.textContent = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}  ±${Math.round(accuracy)}m  ${new Date().toLocaleString()}`;
+}
+
+// ---------- Camera + watermark burn ----------
+async function openCamera() {
+  const video = document.getElementById("camera-stream");
+  try {
+    state.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 960 } },
+      audio: false,
+    });
+    video.srcObject = state.stream;
+    await video.play();
+  } catch (err) {
+    alert("Camera access failed: " + err.message + "\nCheck browser camera permission.");
+  }
+}
+
+function stopCamera() {
+  if (state.stream) {
+    state.stream.getTracks().forEach((t) => t.stop());
+    state.stream = null;
+  }
+}
+
+// Burns GPS + timestamp text directly into the photo pixels (not EXIF —
+// EXIF can be stripped in transit; a burned-in overlay cannot).
+function capturePhotoWithWatermark() {
+  const video = document.getElementById("camera-stream");
+  const canvas = document.getElementById("capture-canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  const now = new Date();
+  const gpsText = state.lastPosition
+    ? `${state.lastPosition.coords.latitude.toFixed(6)}, ${state.lastPosition.coords.longitude.toFixed(6)} ±${Math.round(state.lastPosition.coords.accuracy)}m`
+    : "GPS unavailable";
+  const line1 = `${state.job.siteName}  |  ${state.currentModule.code}-${state.currentSlotId}`;
+  const line2 = `${gpsText}  |  ${now.toLocaleString()}`;
+
+  const barHeight = Math.round(canvas.height * 0.09);
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(0, canvas.height - barHeight, canvas.width, barHeight);
+  ctx.fillStyle = "#ffffff";
+  const fontSize = Math.max(14, Math.round(canvas.width * 0.024));
+  ctx.font = `600 ${fontSize}px monospace`;
+  ctx.textBaseline = "middle";
+  ctx.fillText(line1, 10, canvas.height - barHeight * 0.62);
+  ctx.fillText(line2, 10, canvas.height - barHeight * 0.24);
+
+  return {
+    dataUrl: canvas.toDataURL("image/jpeg", 0.82),
+    gps: state.lastPosition ? {
+      lat: state.lastPosition.coords.latitude,
+      lng: state.lastPosition.coords.longitude,
+      accuracy: state.lastPosition.coords.accuracy,
+    } : null,
+    capturedAt: now.toISOString(),
+  };
+}
+
+// ---------- Sync queue ----------
+async function queuePhotoForSync(photoRecord) {
+  photoRecord.status = "queued";
+  await dbPut("photos", photoRecord);
+  attemptSync();
+}
+
+async function attemptSync() {
+  updateSyncBar();
+  if (!navigator.onLine) return;
+  const queued = await dbGetAll("photos", "status", "queued");
+  for (const photo of queued) {
+    try {
+      const moduleKey = `${state.job.jobId}_${photo.moduleCode}`;
+      const savedModule = await dbGet("modules", moduleKey).catch(() => null);
+      const payload = {
+        photoId: photo.photoId,
+        jobId: state.job.jobId, // real Audit Job record ID
+        moduleCode: photo.moduleCode,
+        slotId: photo.slotId,
+        slotLabel: photo.slotLabel,
+        gps: photo.gps,
+        capturedAt: photo.capturedAt,
+        userRecordId: state.user.userRecordId,
+        auditorObservation: (savedModule && savedModule.auditorObservation) || "",
+        dataUrl: photo.dataUrl,
+      };
+      const res = await fetch(QTEL_CONFIG.ENDPOINTS.PHOTO_SUBMIT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        photo.status = "submitted";
+        photo.submittedAt = new Date().toISOString();
+        await dbPut("photos", photo);
+      }
+    } catch (err) {
+      console.warn("Sync failed, will retry:", err.message);
+      break; // stop trying further items until back online
+    }
+  }
+  updateSyncBar();
+  renderCurrentView();
+}
+
+async function updateSyncBar() {
+  const bar = document.getElementById("sync-bar");
+  const dot = document.getElementById("sync-dot");
+  const msg = document.getElementById("sync-msg");
+  const queued = state.job ? await dbGetAll("photos", "jobId", state.job.jobId) : [];
+  const pendingCount = queued.filter((p) => p.status === "queued").length;
+  dot.className = "dot " + (navigator.onLine ? "online" : "offline");
+  if (!navigator.onLine) {
+    msg.textContent = pendingCount > 0
+      ? `Offline — ${pendingCount} photo(s) saved locally, will sync when back online`
+      : "Offline — data saves locally";
+  } else if (pendingCount > 0) {
+    msg.textContent = `Syncing ${pendingCount} photo(s)…`;
+  } else {
+    msg.textContent = "All data synced";
+  }
+}
+
+window.addEventListener("online", attemptSync);
+window.addEventListener("offline", updateSyncBar);
+
+// ---------- Rendering ----------
 const app = document.getElementById("app");
 let currentView = "login";
 
 function renderCurrentView() {
   if (currentView === "login") renderLogin();
-  else if (currentView === "review-list") renderReviewList();
-  else if (currentView === "review-detail") renderReviewDetail();
-  else if (currentView === "issue-ncr") renderIssueNcr();
+  else if (currentView === "job-list") renderJobList();
+  else if (currentView === "module-list") renderModuleList();
+  else if (currentView === "module-detail") renderModuleDetail();
 }
 
-// ---------- Login ----------
 function renderLogin() {
   app.innerHTML = `
-    <header class="app-bar"><h1>Q-Tel CQR-A Desk</h1><span class="app-wordmark">QACA</span></header>
+    <header class="app-bar"><h1>Q-Tel Auditor — Login</h1><span class="app-wordmark">QACA</span></header>
     <main>
       <div class="card">
         <div class="field">
           <label>User ID</label>
-          <input type="text" id="f-userid" placeholder="e.g. CQRA-1023" autocapitalize="characters">
+          <input type="text" id="f-userid" placeholder="e.g. AUD-1023" autocapitalize="characters">
         </div>
         <div class="field">
           <label>PIN</label>
@@ -33,7 +243,7 @@ function renderLogin() {
         <p class="note" id="login-error" style="color:var(--danger); display:none; margin-top:10px;"></p>
       </div>
     </main>
-    <footer class="company-footer"><span class="name">Quality Austria Central Asia Pvt. Ltd.</span><br>Q-Tel CQR-A Review Desk</footer>
+    <footer class="company-footer"><span class="name">Quality Austria Central Asia Pvt. Ltd.</span><br>Q-Tel Quality Telecom Operations Platform</footer>
   `;
   document.getElementById("btn-login").onclick = async () => {
     const userId = document.getElementById("f-userid").value.trim();
@@ -50,16 +260,18 @@ function renderLogin() {
         body: JSON.stringify({ userId, pin }),
       });
       const data = await res.json();
+      // PIN-only POC mode: treat both "success" and "otp_required" as a valid
+      // PIN match (the PIN check happens before the OTP branch in WF-008),
+      // and skip straight in — OTP step is not wired into the UI yet.
       if (data.status === "success" || data.status === "otp_required") {
         state.user = { userRecordId: data.userRecordId, userId, fullName: data.fullName || userId };
-        currentView = "review-list";
+        currentView = "job-list";
         renderCurrentView();
       } else {
         errEl.textContent = data.message || "Login failed. Check your User ID and PIN.";
         errEl.style.display = "block";
       }
     } catch (err) {
-      console.error("LOGIN ERROR:", err);
       errEl.textContent = "Could not reach the server. Check your connection and try again.";
       errEl.style.display = "block";
     } finally {
@@ -68,231 +280,292 @@ function renderLogin() {
   };
 }
 
-// ---------- Review List ----------
-async function renderReviewList() {
+async function renderJobList() {
   app.innerHTML = `
     <header class="app-bar"><h1>${state.user.fullName}</h1><span class="app-wordmark">QACA</span></header>
     <main>
-      <p class="note" id="reviews-status">Loading pending reviews…</p>
-      <div class="module-list" id="review-list"></div>
+      <p class="note" id="jobs-status">Loading your allocated jobs…</p>
+      <div class="module-list" id="job-list"></div>
     </main>
     <footer class="company-footer"><span class="name">Quality Austria Central Asia Pvt. Ltd.</span></footer>
   `;
   try {
-    const res = await fetch(QTEL_CONFIG.ENDPOINTS.GET_PENDING_REVIEWS, {
+    const res = await fetch(QTEL_CONFIG.ENDPOINTS.GET_MY_JOBS, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ userId: state.user.userId }),
     });
     const data = await res.json();
-    state.reviews = data.reviews || [];
-    document.getElementById("reviews-status").textContent = state.reviews.length
-      ? `${state.reviews.length} module(s) awaiting review. Tap one to open.`
-      : "No modules currently awaiting review.";
-    const listEl = document.getElementById("review-list");
-    state.reviews.forEach((review) => {
-      const flagClass = review.aiFlag === "Clear" ? "pass" : review.aiFlag === "Reject" ? "concern" : "in-progress";
+    const jobs = data.jobs || [];
+    document.getElementById("jobs-status").textContent = jobs.length
+      ? "Tap a job to begin."
+      : "No active jobs allocated to you right now.";
+    const listEl = document.getElementById("job-list");
+    jobs.forEach((job) => {
       const row = document.createElement("div");
       row.className = "module-row";
       row.innerHTML = `
         <div class="info">
-          <div class="name">${review.moduleCode || "Module"}</div>
-          <div class="meta">${(review.photos || []).length} photo(s)</div>
+          <div class="name">${job.auditJobId}</div>
+          <div class="meta">${job.site || "Site TBD"} · ${job.elementType || ""} ${job.concreteGrade || ""}</div>
         </div>
-        <div class="pill ${flagClass}">${review.aiFlag || "Pending"}</div>
+        <div class="pill in-progress">Open</div>
       `;
-      row.onclick = () => {
-        state.currentReview = review;
-        state.selectedDecision = null;
-        currentView = "review-detail";
+      row.onclick = async () => {
+        state.job = {
+          jobId: job.recordId, // real Audit Job record ID — used directly in photo submissions
+          auditJobId: job.auditJobId,
+          siteName: job.site || "Site TBD",
+          elementType: job.elementType || "",
+          concreteGrade: job.concreteGrade || "",
+        };
+        await dbPut("jobs", state.job);
+        startGPSWatch();
+        currentView = "module-list";
         renderCurrentView();
       };
       listEl.appendChild(row);
     });
   } catch (err) {
-    console.error("REVIEW LIST ERROR:", err);
-    document.getElementById("reviews-status").textContent = "Could not load reviews. Check your connection and try again.";
+    document.getElementById("jobs-status").textContent = "Could not load your jobs. Check your connection and try again.";
   }
 }
 
-// ---------- Review Detail ----------
-function renderReviewDetail() {
-  const review = state.currentReview;
-  const photos = review.photos || [];
+async function renderModuleList() {
+  const photos = await dbGetAll("photos", "jobId", state.job.jobId);
+  app.innerHTML = `
+    <header class="app-bar">
+      <span class="back" id="btn-back">‹</span>
+      <h1>${state.job.siteName}</h1>
+      <span class="app-wordmark">QACA</span>
+      <span class="badge">${state.job.elementType}</span>
+    </header>
+    <main>
+      <div class="module-list" id="module-list"></div>
+    </main>
+    <div class="sync-bar" id="sync-bar"><span class="dot" id="sync-dot"></span><span class="msg" id="sync-msg"></span></div>
+  `;
+  document.getElementById("btn-back").onclick = () => { currentView = "job-list"; renderCurrentView(); };
+
+  const listEl = document.getElementById("module-list");
+  QTEL_CONFIG.MODULES.forEach((mod) => {
+    const modPhotos = photos.filter((p) => p.moduleCode === mod.code);
+    const filledCount = new Set(modPhotos.map((p) => p.slotId)).size;
+    const total = mod.slots.length;
+    let pillClass = "not-started", pillText = "Not started";
+    if (mod.operational === false) { pillClass = "locked"; pillText = "Locked (not in SoW)"; }
+    else if (filledCount > 0 && filledCount < total) { pillClass = "in-progress"; pillText = `${filledCount}/${total}`; }
+    else if (filledCount === total && total > 0) {
+      const allSubmitted = modPhotos.every((p) => p.status === "submitted");
+      pillClass = allSubmitted ? "submitted" : "queued";
+      pillText = allSubmitted ? "Submitted" : "Queued";
+    }
+    const row = document.createElement("div");
+    row.className = "module-row";
+    row.innerHTML = `
+      <div class="code">${mod.code}</div>
+      <div class="info">
+        <div class="name">${mod.name}${mod.requiresSeniorReview ? " *" : ""}</div>
+        <div class="meta">${mod.stage} · ${total} photo${total !== 1 ? "s" : ""}</div>
+      </div>
+      <div class="pill ${pillClass}">${pillText}</div>
+    `;
+    if (mod.operational !== false) {
+      row.onclick = () => { state.currentModule = mod; currentView = "module-detail"; renderCurrentView(); };
+    }
+    listEl.appendChild(row);
+  });
+
+  updateSyncBar();
+}
+
+async function renderModuleDetail() {
+  const mod = state.currentModule;
+  const photos = await dbGetAll("photos", "jobId", state.job.jobId);
+  const modPhotos = photos.filter((p) => p.moduleCode === mod.code);
 
   app.innerHTML = `
     <header class="app-bar">
       <span class="back" id="btn-back">‹</span>
-      <h1>${review.moduleCode || "Module"}</h1>
+      <h1>${mod.code} — ${mod.name}</h1>
       <span class="app-wordmark">QACA</span>
     </header>
     <main>
       <div class="card">
-        <div class="field" style="margin-bottom:8px;"><label>Photos (${photos.length})</label></div>
-        <div class="review-photo-grid" id="photo-grid"></div>
+        <div class="slot-grid" id="slot-grid"></div>
       </div>
+      <p class="note">Tap a tile to capture that photo. GPS and timestamp are burned into the image automatically. ${mod.requiresSeniorReview ? "This module always requires senior CQR-A review — no automated clearance." : ""}</p>
       <div class="card">
-        <div class="field" style="margin-bottom:8px;"><label>Auditor Observation</label></div>
-        <div class="ai-observation-box">${(review.auditorObservation || "No observation entered by Auditor.").replace(/</g, "&lt;")}</div>
-      </div>
-      <div class="card">
-        <div class="field" style="margin-bottom:8px;"><label>AI Observation</label></div>
-        <div class="ai-observation-box">${(review.aiObservation || "No observation available.").replace(/</g, "&lt;")}</div>
-      </div>
-      <div class="card">
-        <div class="field" style="margin-bottom:8px;"><label>Your Decision</label></div>
-        <div class="decision-row">
-          <button class="decision-btn" data-decision="Clear">Clear</button>
-          <button class="decision-btn" data-decision="Attention">Attention</button>
-          <button class="decision-btn" data-decision="Reject">Reject</button>
+        <div class="field" style="margin-bottom:0;">
+          <label>Auditor Observation (optional)</label>
+          <textarea id="f-auditor-observation" rows="3" placeholder="Anything you noticed on site worth recording — e.g. site conditions, access issues, anything not fully visible in the photos."></textarea>
+          <p class="note" style="margin-top:6px;">This is your factual record, not a pass/fail call — CQR-A makes all grading decisions.</p>
         </div>
-        <div class="field">
-          <label>Notes</label>
-          <textarea id="f-notes" rows="3" placeholder="Your review notes..."></textarea>
-        </div>
-        <button class="primary" id="btn-submit-decision">Submit Decision</button>
-        <div class="secondary-action" id="btn-issue-ncr">Issue NCR for this module instead →</div>
       </div>
+      <button class="primary" id="btn-submit-module" style="margin-top:12px;">Submit Module</button>
     </main>
+    <div class="camera-wrap hidden" id="camera-wrap">
+      <div class="camera-frame">
+        <video id="camera-stream" autoplay playsinline muted></video>
+        <div class="gps-chip" id="gps-chip">Acquiring GPS…</div>
+      </div>
+      <canvas id="capture-canvas" class="hidden"></canvas>
+      <div class="camera-actions">
+        <button class="secondary" id="btn-cancel-capture">Cancel</button>
+        <button class="primary" id="btn-take-photo">Capture</button>
+      </div>
+    </div>
+    <div class="sync-bar" id="sync-bar"><span class="dot" id="sync-dot"></span><span class="msg" id="sync-msg"></span></div>
   `;
+  document.getElementById("btn-back").onclick = () => { currentView = "module-list"; renderCurrentView(); };
 
-  document.getElementById("btn-back").onclick = () => { currentView = "review-list"; renderCurrentView(); };
-
-  const photoGrid = document.getElementById("photo-grid");
-  if (photos.length === 0) {
-    photoGrid.innerHTML = `<p class="note">No photos found for this module.</p>`;
-  } else {
-    photos.forEach((p) => {
-      const wrap = document.createElement("div");
-      const directLink = toDirectDriveLink(p.driveLink);
-      wrap.innerHTML = `<img src="${directLink}" loading="lazy"><div class="slot-label">${p.slot || ""}</div>`;
-      photoGrid.appendChild(wrap);
+  const moduleKey = `${state.job.jobId}_${mod.code}`;
+  const savedModule = await dbGet("modules", moduleKey).catch(() => null);
+  const obsField = document.getElementById("f-auditor-observation");
+  if (savedModule && savedModule.auditorObservation) obsField.value = savedModule.auditorObservation;
+  obsField.addEventListener("blur", async () => {
+    await dbPut("modules", {
+      moduleRecordId: moduleKey,
+      jobId: state.job.jobId,
+      moduleCode: mod.code,
+      auditorObservation: obsField.value,
     });
-  }
-
-  document.querySelectorAll(".decision-btn").forEach((btn) => {
-    btn.onclick = () => {
-      state.selectedDecision = btn.dataset.decision;
-      document.querySelectorAll(".decision-btn").forEach((b) => b.className = "decision-btn");
-      btn.className = `decision-btn selected ${state.selectedDecision.toLowerCase()}`;
-    };
   });
 
-  document.getElementById("btn-submit-decision").onclick = async () => {
-    if (!state.selectedDecision) { alert("Please select a decision: Clear, Attention, or Reject."); return; }
-    const btn = document.getElementById("btn-submit-decision");
-    btn.disabled = true; btn.textContent = "Submitting…";
-    try {
-      const res = await fetch(QTEL_CONFIG.ENDPOINTS.SUBMIT_DECISION, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          moduleRecordId: review.moduleRecordId,
-          cqrARecordId: state.user.userRecordId,
-          decision: state.selectedDecision,
-          notes: document.getElementById("f-notes").value,
-        }),
-      });
-      const data = await res.json();
-      if (data.status === "success") {
-        alert("Decision recorded.");
-        currentView = "review-list";
-        renderCurrentView();
-      } else {
-        alert(data.message || "Something went wrong submitting the decision.");
-      }
-    } catch (err) {
-      alert("Could not reach the server. Check your connection and try again.");
-    } finally {
-      btn.disabled = false; btn.textContent = "Submit Decision";
+  const grid = document.getElementById("slot-grid");
+  mod.slots.forEach((slot) => {
+    const existing = modPhotos.find((p) => p.slotId === slot.id);
+    const tile = document.createElement("div");
+    tile.className = "slot-tile" + (existing ? " filled" : "");
+    if (existing) {
+      tile.innerHTML = `<img src="${existing.dataUrl}"><div class="check">✓</div>`;
+    } else {
+      tile.innerHTML = `<div class="plus">+</div><div class="label">${slot.label}</div>`;
     }
-  };
+    tile.onclick = () => startCaptureForSlot(slot);
+    grid.appendChild(tile);
+  });
 
-  document.getElementById("btn-issue-ncr").onclick = () => {
-    currentView = "issue-ncr";
+  document.getElementById("btn-submit-module").onclick = () => submitModule(mod, modPhotos, obsField.value);
+  updateSyncBar();
+}
+
+async function startCaptureForSlot(slot) {
+  state.currentSlotId = slot.id;
+
+  if (slot.timerStartsFromSlot) {
+    const existingPhotos = await dbGetAll("photos", "jobId", state.job.jobId);
+    const startPhoto = existingPhotos.find(
+      (p) => p.moduleCode === state.currentModule.code && p.slotId === slot.timerStartsFromSlot
+    );
+    if (!startPhoto) {
+      alert("Capture the 'START' photo for this test first — the 60-minute timer is measured from that photo's actual timestamp.");
+      return;
+    }
+    const elapsedMs = Date.now() - new Date(startPhoto.capturedAt).getTime();
+    const remaining = slot.timerSeconds * 1000 - elapsedMs;
+    if (remaining > 0) {
+      openCameraAndArmCapture(slot);
+      showTimerLock(remaining, () => {});
+      return;
+    }
+  }
+
+  openCameraAndArmCapture(slot);
+}
+
+function openCameraAndArmCapture(slot) {
+  const wrap = document.getElementById("camera-wrap");
+  wrap.classList.remove("hidden");
+  wrap.scrollIntoView({ behavior: "smooth" });
+  openCamera();
+
+  if (slot.timerSeconds && !slot.timerStartsFromSlot) {
+    // Legacy path: timer anchored to first tap into this slot (used only if a slot has
+    // timerSeconds but no linked start slot).
+    const key = `${state.job.jobId}_${state.currentModule.code}_${slot.id}_timerStart`;
+    let startedAt = localStorage.getItem(key);
+    if (!startedAt) { startedAt = Date.now(); localStorage.setItem(key, startedAt); }
+    const remaining = slot.timerSeconds * 1000 - (Date.now() - Number(startedAt));
+    if (remaining > 0) {
+      showTimerLock(remaining, () => {});
+    }
+  }
+
+  document.getElementById("btn-cancel-capture").onclick = () => {
+    stopCamera();
+    wrap.classList.add("hidden");
+  };
+  document.getElementById("btn-take-photo").onclick = async () => {
+    const captured = capturePhotoWithWatermark();
+    const photoRecord = {
+      photoId: `${state.job.jobId}_${state.currentModule.code}_${slot.id}`,
+      jobId: state.job.jobId,
+      moduleCode: state.currentModule.code,
+      slotId: slot.id,
+      slotLabel: slot.label,
+      dataUrl: captured.dataUrl,
+      gps: captured.gps,
+      capturedAt: captured.capturedAt,
+      status: "captured",
+    };
+    await queuePhotoForSync(photoRecord);
+    stopCamera();
+    wrap.classList.add("hidden");
     renderCurrentView();
   };
 }
 
-// Converts a Drive share/view link into a directly-loadable image URL, matching
-// the same uc?export=download pattern used throughout Q-Tel's photo pipeline.
-function toDirectDriveLink(link) {
-  if (!link) return "";
-  if (link.includes("uc?export=download")) return link;
-  const match = link.match(/[-\w]{25,}/);
-  return match ? `https://drive.google.com/uc?export=download&id=${match[0]}` : link;
-}
-
-// ---------- Issue NCR ----------
-function renderIssueNcr() {
-  const review = state.currentReview;
-  app.innerHTML = `
-    <header class="app-bar">
-      <span class="back" id="btn-back">‹</span>
-      <h1>Issue NCR — ${review.moduleCode || "Module"}</h1>
-      <span class="app-wordmark">QACA</span>
-    </header>
-    <main>
-      <div class="card">
-        <div class="field">
-          <label>NCR Type</label>
-          <select id="f-ncr-type">
-            <option>Observation</option>
-            <option selected>Minor NCR</option>
-            <option>Major NCR</option>
-            <option>Stop Notice</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Finding</label>
-          <textarea id="f-finding" rows="3" placeholder="What was found..."></textarea>
-        </div>
-        <div class="field">
-          <label>Action Required</label>
-          <textarea id="f-action-required" rows="2" placeholder="What must be done..."></textarea>
-        </div>
-        <div class="field">
-          <label>Action Deadline</label>
-          <input type="date" id="f-deadline">
-        </div>
-        <button class="primary" id="btn-issue">Issue NCR</button>
-      </div>
-    </main>
-  `;
-  document.getElementById("btn-back").onclick = () => { currentView = "review-detail"; renderCurrentView(); };
-  document.getElementById("btn-issue").onclick = async () => {
-    const finding = document.getElementById("f-finding").value.trim();
-    const actionRequired = document.getElementById("f-action-required").value.trim();
-    const actionDeadline = document.getElementById("f-deadline").value;
-    if (!finding || !actionRequired || !actionDeadline) { alert("Finding, Action Required, and Deadline are all required."); return; }
-    const btn = document.getElementById("btn-issue");
-    btn.disabled = true; btn.textContent = "Issuing…";
-    try {
-      const res = await fetch(QTEL_CONFIG.ENDPOINTS.ISSUE_NCR, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          moduleRecordId: review.moduleRecordId,
-          cqrARecordId: state.user.userRecordId,
-          ncrType: document.getElementById("f-ncr-type").value,
-          finding, actionRequired, actionDeadline,
-        }),
-      });
-      const data = await res.json();
-      if (data.status === "success") {
-        alert(`NCR issued: ${data.ncrId}`);
-        currentView = "review-list";
-        renderCurrentView();
-      } else {
-        alert(data.message || "Something went wrong issuing the NCR.");
-      }
-    } catch (err) {
-      alert("Could not reach the server. Check your connection and try again.");
-    } finally {
-      btn.disabled = false; btn.textContent = "Issue NCR";
+function showTimerLock(remainingMs, onDone) {
+  const frame = document.querySelector("#camera-wrap .camera-frame");
+  const lock = document.createElement("div");
+  lock.className = "timer-lock";
+  frame.appendChild(lock);
+  document.getElementById("btn-take-photo").disabled = true;
+  const tick = () => {
+    const mins = Math.floor(remainingMs / 60000);
+    const secs = Math.floor((remainingMs % 60000) / 1000);
+    lock.innerHTML = `<div>Silt settling — wait required</div><div style="font-size:20px;">${mins}:${String(secs).padStart(2, "0")}</div>`;
+    remainingMs -= 1000;
+    if (remainingMs <= 0) {
+      lock.remove();
+      document.getElementById("btn-take-photo").disabled = false;
+      onDone();
+    } else {
+      setTimeout(tick, 1000);
     }
   };
+  tick();
+}
+
+async function submitModule(mod, modPhotos, auditorObservation) {
+  if (modPhotos.length < mod.slots.length) {
+    alert(`${mod.slots.length - modPhotos.length} photo(s) still needed before this module can be submitted.`);
+    return;
+  }
+  await dbPut("modules", {
+    moduleRecordId: `${state.job.jobId}_${mod.code}`,
+    jobId: state.job.jobId,
+    moduleCode: mod.code,
+    auditorObservation: auditorObservation || "",
+    submittedAt: new Date().toISOString(),
+  });
+  for (const p of modPhotos) {
+    if (p.status === "captured") {
+      await queuePhotoForSync(p);
+    }
+  }
+  alert("Module queued for submission. It will sync to Airtable automatically — the AI analysis starts as soon as it arrives, and CQR-A is notified on WhatsApp.");
+  attemptSync();
+  currentView = "module-list";
+  renderCurrentView();
 }
 
 // ---------- Boot ----------
-renderCurrentView();
+(async function init() {
+  await openDB();
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW register failed", e));
+  }
+  renderCurrentView();
+})();
